@@ -113,6 +113,25 @@ def mask_var_refs(line):
         i = k + 1
 
 
+def load_token_values(theme_path):
+    """{value: token-name} from a Tailwind v4 theme file.
+
+    A hardcoded value only matters when the design system already has a token
+    for it. Geometry that has no token (component widths, font sizes, stroke
+    widths) is reported as noise, so --tokens narrows the report to the
+    values that can actually be replaced.
+    """
+    import re as _re
+    try:
+        src = open(theme_path).read()
+    except OSError:
+        return {}
+    out = {}
+    for m in _re.finditer(r"(--(?:spacing|radius|size|gap|inset)-[\w-]+)\s*:\s*([^;]+);", src):
+        out.setdefault(m.group(2).strip(), m.group(1))
+    return out
+
+
 def lint_line(line, tailwind=True, css_scope=True):
     """css_scope=False means the line is markup or prose, not CSS.
 
@@ -159,6 +178,7 @@ def lint_line(line, tailwind=True, css_scope=True):
 def main(argv):
     exts = CODE_EXT
     tailwind = True
+    token_values = {}
     args = []
     i = 0
     while i < len(argv):
@@ -168,6 +188,9 @@ def main(argv):
         elif argv[i] in ("--no-tw", "--no-tailwind"):
             tailwind = False
             i += 1
+        elif argv[i] == "--tokens" and i + 1 < len(argv):
+            token_values = load_token_values(argv[i + 1])
+            i += 2
         else:
             args.append(argv[i])
             i += 1
@@ -232,7 +255,12 @@ def main(argv):
             else:
                 line, in_comment = raw, False
             for kind, val in lint_line(line, tailwind, css_here):
-                print(f"{f}:{n}: hardcoded {kind} '{val}' — use a token")
+                if token_values and val not in token_values:
+                    # no token for this value: geometry and type sizes are
+                    # legitimately literal, so they are not drift.
+                    continue
+                hint = f" (= {token_values[val]})" if val in token_values else ""
+                print(f"{f}:{n}: hardcoded {kind} '{val}' — use a token{hint}")
                 violations += 1
 
     print(f"\nScanned {len(files) - len(unreadable)} of {len(files)} candidate file(s).")
